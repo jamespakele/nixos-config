@@ -27,6 +27,9 @@ nvme1n1 or Mint's p2.
    cp -a ~/.pi /srv/data/pi-backup/        # extensions/themes/skills/sessions
    ```
    The repo is safe on GitHub; `~/.pi` and `~/.ssh` are not.
+   Related notes live at `/srv/data/3-resources/config-notes/nixos/`:
+   `bare-metal/` is this playbook (reading copy, no git), `nixos-vm-flake/`
+   holds the prior VM trial handoff (HANDOFF.md / RESULTS.md).
 2. Skim `hosts/nixos/configuration.nix`: set `time.timeZone` to yours, add
    your SSH pubkey to `users.users.pakele.openssh.authorizedKeys.keys`,
    rename the host (`nixos`) if you want something else — rename means
