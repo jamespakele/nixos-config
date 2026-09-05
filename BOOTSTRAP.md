@@ -10,6 +10,12 @@ edit flake → sudo nixos-rebuild switch --flake ~/nixos-config#nixos → commit
 
 NixOS makes every `switch` a rollback generation — agent mistakes cost a
 reboot, not a reinstall.
+Recovery layers, worst case first: Windows (nvme1n1, separate drive — always
+boots regardless) → Linux Mint (nvme0n1p2, untouched) → shared data partition
+(nvme0n1p4: backups, .ssh, hermes) → GitHub flake (full NixOS rebuild:
+`sudo nixos-install --flake github:jamespakele/nixos-config#nixos`) →
+NixOS generation rollback (everyday recovery). Nothing in the install touches
+nvme1n1 or Mint's p2.
 
 ## Phase 0 — now, on CachyOS (before you wipe anything)
 1. **Back up state to the data partition** — `/srv/data` (ext4, label
