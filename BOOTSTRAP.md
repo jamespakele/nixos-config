@@ -131,6 +131,7 @@ git add -A && git commit -m "..." && git push
 - Clean old gens: automatic (`nix.gc` weekly, 14d retention, already set).
 - Secrets (SSH keys, tokens): never in the repo — `sops-nix` or `agenix`
   when the agent gets there.
+- New machine / fresh disk: Phase 1 again, `nixos-install --flake
   github:jamespakele/nixos-config#nixos`, identical system back.
 - Shared data partition (`/srv/data`, by-label `data`): Mint + NixOS both
   mount it (agent adds `fileSystems."/srv/data"` in Phase 2). The hermes
