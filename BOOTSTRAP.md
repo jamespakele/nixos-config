@@ -4,8 +4,6 @@ Goal: minimal NixOS installed from this repo, pi working within minutes of
 first boot, then pi installs omp, then omp builds out the rest of the system
 declaratively. Hyprland enabled from phase 1; COSMIC added last (phase 3).
 
-The core loop from day one:
-
 ```
 edit flake → sudo nixos-rebuild switch --flake ~/nixos-config#nixos → commit+push
 ```
@@ -13,12 +11,16 @@ edit flake → sudo nixos-rebuild switch --flake ~/nixos-config#nixos → commit
 NixOS makes every `switch` a rollback generation — agent mistakes cost a
 reboot, not a reinstall.
 
----
-
 ## Phase 0 — now, on CachyOS (before you wipe anything)
-
-1. **Back up `~/.pi`** (extensions, themes, skills, sessions) to another
-   disk/USB/cloud. The repo is safe on GitHub; `~/.pi` is not.
+1. **Back up state to the data partition** — `/srv/data` (ext4, label
+   `data`, nvme0n1p4, 489G). It survives the install because we reuse
+   nvme0n1's existing partitions (see Phase 1 — never re-partition this disk):
+   ```bash
+   mkdir -p /srv/data/.ssh /srv/data/pi-backup
+   cp -a ~/.ssh/. /srv/data/.ssh/          # DONE 2026-09-05, checksums verified
+   cp -a ~/.pi /srv/data/pi-backup/        # extensions/themes/skills/sessions
+   ```
+   The repo is safe on GitHub; `~/.pi` and `~/.ssh` are not.
 2. Skim `hosts/nixos/configuration.nix`: set `time.timeZone` to yours, add
    your SSH pubkey to `users.users.pakele.openssh.authorizedKeys.keys`,
    rename the host (`nixos`) if you want something else — rename means
@@ -37,32 +39,25 @@ reboot, not a reinstall.
 ## Phase 1 — install (from the ISO)
 
 1. Boot USB (disable Secure Boot if on; CachyOS already left you UEFI).
-2. Partition the target disk. Layout assumed by the placeholder
-   `hardware-configuration.nix`: ESP labeled `BOOT` (FAT32, ~1GB), root
-   labeled `nixos` (ext4, rest). Example with `sgdisk`/`mkfs`:
+2. **Reuse the existing nvme0n1 partitions — do NOT run sgdisk on this disk**
+   (nvme0n1p4 is the data partition with your backups). CachyOS layout:
+   p1 = ESP (vfat, 512M, keep), p2 = ext4 (782G, keep for data or reformat),
+   p3 = btrfs root (590G, reformat), p4 = ext4 `data` (489G, KEEP).
    ```bash
-   sudo sgdisk -n1:0:+1G -t1:EF00 -n2:0:0 /dev/nvme0n1   # adjust device!
-   sudo mkfs.fat -F32 -n BOOT /dev/nvme0n1p1
-   sudo mkfs.ext4 -L nixos /dev/nvme0n1p2
+   sudo mkfs.ext4 -L nixos /dev/nvme0n1p3        # wipe old CachyOS root only
    sudo mount /dev/disk/by-label/nixos /mnt
-   sudo mkdir -p /mnt/boot && sudo mount /dev/disk/by-label/BOOT /mnt/boot
+   sudo mkdir -p /mnt/boot && sudo mount /dev/nvme0n1p1 /mnt/boot
    ```
-   Keeping old `/home`? Mount it under `/mnt/home` too and add it to
-   `hardware-configuration.nix` after generation.
-3. **Fix the hardware config** — the repo's placeholder only works if your
-   labels match. Generate the real one from the installer:
+3. Generate the real hardware config (replaces the repo placeholder with
+   actual UUIDs) and install:
    ```bash
    sudo nixos-generate-config --root /mnt
    cp /mnt/etc/nixos/hardware-configuration.nix ~/nixos-config/hosts/nixos/
-   ```
-   (Clone first if you haven't: `nix-shell -p git`, then
-   `git clone https://github.com/jamespakele/nixos-config ~/nixos-config`.)
-4. Install — Nix fetches the flake straight from GitHub if you'd rather
-   not clone:
-   ```bash
    sudo nixos-install --flake ~/nixos-config#nixos
    reboot
    ```
+   (Clone first on the ISO if you haven't: `nix-shell -p git`, then
+   `git clone https://github.com/jamespakele/nixos-config ~/nixos-config`.)
 
 ## Phase 2 — agent online (first boot, TTY)
 
@@ -75,6 +70,7 @@ cd ~/nixos-config
 
 npm i -g @mariozechner/pi-coding-agent
 pi                       # restore ~/.pi from backup first if you have it
+cp -a /srv/data/.ssh/. ~/.ssh/   # restore keys for git push (needs /srv/data mounted — see Phase 1.2 note)
 ```
 
 **House rules for the agent** (paste once, or drop into `~/.pi` as a skill):
