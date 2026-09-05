@@ -41,13 +41,18 @@ reboot, not a reinstall.
 1. Boot USB (disable Secure Boot if on; CachyOS already left you UEFI).
 2. **Reuse the existing nvme0n1 partitions — do NOT run sgdisk on this disk**
    (nvme0n1p4 is the data partition with your backups). CachyOS layout:
-   p1 = ESP (vfat, 512M, keep), p2 = ext4 (782G, keep for data or reformat),
-   p3 = btrfs root (590G, reformat), p4 = ext4 `data` (489G, KEEP).
+   p1 = ESP (vfat, 512M, keep), p2 = ext4 (782G) = **Linux Mint — the stable
+   rescue boot, never touched**, p3 = btrfs root (590G, reformat to nixos),
+   p4 = ext4 `data` (489G, KEEP — shared by Mint + NixOS, incl. the hermes
+   install and `/srv/data/.ssh` backups).
    ```bash
    sudo mkfs.ext4 -L nixos /dev/nvme0n1p3        # wipe old CachyOS root only
    sudo mount /dev/disk/by-label/nixos /mnt
    sudo mkdir -p /mnt/boot && sudo mount /dev/nvme0n1p1 /mnt/boot
    ```
+   Note the ESP (p1) is shared with Mint's GRUB. NixOS's systemd-boot will
+   coexist — if Mint disappears from the NixOS boot menu, boot it via the
+   UEFI firmware boot menu (F8/F11) instead; both stay intact on the ESP.
 3. Generate the real hardware config (replaces the repo placeholder with
    actual UUIDs) and install:
    ```bash
@@ -126,8 +131,12 @@ git add -A && git commit -m "..." && git push
 - Clean old gens: automatic (`nix.gc` weekly, 14d retention, already set).
 - Secrets (SSH keys, tokens): never in the repo — `sops-nix` or `agenix`
   when the agent gets there.
-- New machine / fresh disk: Phase 1 again, `nixos-install --flake
   github:jamespakele/nixos-config#nixos`, identical system back.
+- Shared data partition (`/srv/data`, by-label `data`): Mint + NixOS both
+  mount it (agent adds `fileSystems."/srv/data"` in Phase 2). The hermes
+  install there was set up under Mint/CachyOS — expect path/glibc quirks
+  under NixOS; if it's an npm/bun project it usually just works, native
+  binaries may need rebuilding. Mint is the unaffected fallback.
 - Later — deployable agent hosts (business): add a second
   `nixosConfigurations.<name>` to the flake sharing the same modules; same
   repo deploys to podman/VMs/small hardware via `nixos-install --flake` or
