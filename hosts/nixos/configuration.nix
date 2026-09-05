@@ -13,11 +13,10 @@
   users.users.pakele = {
     isNormalUser = true;
     extraGroups = [ "wheel" "video" "networkmanager" ];
-    openssh.authorizedKeys.keys = [ ]; # add your pubkey here pre-install
+    openssh.authorizedKeys.keys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINwvGkgylG5py9WmplQYFTaDBGph1i03LA9GlcE4Tb4N james@pakele.ai" ];
   };
 
   services.openssh.enable = true;
-
   # Desktop sessions — enabled now; COSMIC added later via flake input (Phase 3)
   programs.hyprland.enable = true;
 
