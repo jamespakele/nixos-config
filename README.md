@@ -2,7 +2,7 @@
 
 Agent-driven NixOS configuration. One flake, one machine definition, everything declarative.
 
-- `flake.nix` — entry point: nixpkgs 25.11 + home-manager (+ COSMIC via nixos-cosmic)
+- `flake.nix` — entry point: nixpkgs 26.05 + home-manager (+ COSMIC via nixos-cosmic)
 - `hosts/nixos/configuration.nix` — system config (NVIDIA, Hyprland, base services)
 - `hosts/nixos/hardware-configuration.nix` — **placeholder**; replaced from the installer (see BOOTSTRAP.md)
 - `home.nix` — user environment: nodejs 22 + bun (pi/omp runtimes), git, tmux

@@ -1,7 +1,7 @@
 { config, pkgs, ... }: {
   home.username = "pakele";
   home.homeDirectory = "/home/pakele";
-  home.stateVersion = "25.11";
+  home.stateVersion = "26.05";
 
   home.packages = with pkgs; [
     nodejs_22 # pi engine requirement: Node >= 22.19

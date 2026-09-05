@@ -36,10 +36,10 @@ nvme1n1 or Mint's p2.
    ```bash
    cd ~/nixos-config && git add -A && git commit -m "bootstrap" && git push
    ```
-4. Download the **minimal** NixOS ISO (25.11) → USB:
+4. Download the **minimal** NixOS ISO (26.05) → USB:
    ```bash
    # dd or Ventoy; example:
-   sudo dd if=nixos-minimal-25.11*.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   sudo dd if=nixos-minimal-26.05*.iso of=/dev/sdX bs=4M status=progress oflag=sync
    ```
 
 ## Phase 1 — install (from the ISO)
@@ -151,7 +151,7 @@ git add -A && git commit -m "..." && git push
 
 ## Gotchas
 
-- nixpkgs ↔ home-manager must be the same release (both 25.11 here).
+- nixpkgs ↔ home-manager must be the same release (both 26.05 here).
 - COSMIC in nixpkgs is immature — always via the `nixos-cosmic` flake.
 - Agent state (`~/.pi`) is the one non-declarative piece — back it up or
   accept re-running `pi install npm:...` on a fresh machine.
