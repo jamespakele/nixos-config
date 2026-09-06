@@ -12,7 +12,9 @@
     fsType = "ext4";
   };
   fileSystems."/boot" = {
-    device = "/dev/disk/by-partuuid/b45dfc6b-fa67-48a0-8f90-d1d4ba595a89";
+    # Placeholder value — the installer replaces this whole file with the
+    # machine's real generated hardware config before anything mounts.
+    device = "/dev/disk/by-label/ESP";
     fsType = "vfat";
     options = [ "fmask=0077" "dmask=0077" ];
   };

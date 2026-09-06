@@ -20,17 +20,24 @@ reviewed are exactly what runs (the installer prints its source commit).
    ```bash
    sudo dd if=nixos-minimal-26.05*.iso of=/dev/sdX bs=4M status=progress oflag=sync
    ```
-2. Copy the whole repo to a second stick (or the same Ventoy stick):
+2. Copy the whole repo to a second stick (or a Ventoy data partition):
    ```bash
    rsync -a ~/nixos-config/ /media/$USER/KIT/nixos-config/
    ```
-   No GitHub and no data partition are needed for the install.
+   The kit must be on a WRITABLE USB — a stick written with `dd` is a
+   read-only ISO filesystem, so use a second stick or Ventoy's data
+   partition. No GitHub and no data partition are needed for the install.
+   On the ISO console, locate the kit with:
+   ```bash
+   find /run/media /media -path '*/nixos-config/bare-metal/bootstrap.sh' 2>/dev/null
+   ```
 
 Cut the kit from a PUSHED commit whenever possible: push first, then copy
 that exact tree to the stick, and note the commit hash with the kit (the
-installer prints it anyway). A kit carrying an older `.git` still works —
-first-boot recovers a moved remote with fetch + rebase (exact commands are
-printed if a push is ever rejected).
+installer prints it anyway). first-boot fetches and rebases onto
+origin/master before every push, so a kit with stale or missing git history
+still lands as a normal fast-forward — conflicts stop the push with exact
+recovery commands (never force-pushed).
 
 ## Phase 1 — install (from the ISO, at the physical console)
 
@@ -44,7 +51,8 @@ What the installer does, in order: repo gates (it refuses to run against the
 bug classes from the 2026-09-05 audit — missing hardware import, self-import,
 placeholder inputs, committed passwords) → clears any stale `/mnt` from a
 failed prior run → device menus (you SELECT the root partition to erase and
-the ESP; on this box the known-good picks are pre-marked, Enter takes them) →
+the ESP; defaults are derived from the target machine's own labels at run
+time — the kit embeds no machine-specific IDs) →
 typed confirmation (`ERASE /dev/…`) → format → generate real hardware config →
 eval gate → nixos-install (sets root's password interactively, and the script
 VERIFIES both root's and pakele's passwords before declaring success — it
@@ -53,15 +61,33 @@ this) → copies the repo (with git history and the pinned flake.lock) into
 `/home/pakele/nixos-config`.
 
 Be clear about what `--check-only` proves: device selection, gates, and the
-plan — nothing more. The flake eval, `nix flake lock`, and `nixos-install`
-only run for real; expect a possible fix-and-rerun cycle on a first install
-(all of it happens before any disk is touched, so a rerun is free).
+plan — nothing more. The installer runs a PRELIMINARY eval (placeholder
+hardware config) before any disk is touched — config-class bugs, like the
+NVIDIA option-type error the eval gate caught on 2026-09-05, are free
+fix-and-rerun. The DEFINITIVE eval against the real generated hardware
+config necessarily runs after format; a failure there means correcting the
+kit and rerunning the install (your data partition and other OSes are still
+untouched — only the freshly formatted root is at stake).
+
+On any machine with Nix installed, you can rehearse the config checks
+without booting anything:
+```bash
+nix flake lock
+nix flake check
+nix eval .#nixosConfigurations.nixos.config.system.build.toplevel.drvPath
+```
+The installer runs the same eval itself — a flake that cannot evaluate
+never gets as far as installing.
 
 Modes:
 
 - **Interactive menus (default).** Mounted partitions, Windows disks (ntfs),
-  and anything labeled `data`/`home`/`backup` are never offered. The kit USB
-  can never wipe itself.
+  and anything labeled `data`/`home`/`backup` are never offered (**`--check-only`
+  is the exception: it displays mounted candidates read-only, purely for
+  inspection**); an UNLABELED root candidate demands a stronger token
+  (`ERASE UNLABELED …`). The kit USB can never wipe itself. The ESP is always
+  an explicit selection — the root default is only a hint derived from this
+  machine's own labels, so read the menu before pressing Enter.
 - **`--root DEV --esp DEV`** — non-interactive; same gates. Targeting a
   Windows-disk partition or a data-labeled partition requires additional
   typed confirmations (`I UNDERSTAND …`).
@@ -124,6 +150,8 @@ generation rollback (everyday).
 
 ## Gotchas
 
+- The repo's branch is `master` (first-boot.sh pushes `master`) — renaming it
+  means updating first-boot.sh too.
 - nixpkgs ↔ home-manager must be the same release (both 26.05 here).
 - Machine-specific hardware config (NVIDIA, kernel params) lives in
   `configuration.nix`, NOT `hardware-configuration.nix` — that file is

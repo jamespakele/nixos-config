@@ -25,6 +25,11 @@
 
   services.openssh.enable = true;
 
+  # The NVIDIA proprietary driver is unfree (unfreeRedistributable) — without
+  # this the eval/build refuses at nvidia-x11. Caught by the eval gate
+  # 2026-09-05, before it could fail mid-install.
+  nixpkgs.config.allowUnfree = true;
+
   # Desktop sessions — enabled now; COSMIC added later via flake input (Phase 3)
   programs.hyprland.enable = true;
 
@@ -34,7 +39,7 @@
   services.xserver.videoDrivers = [ "nvidia" ];
   hardware.nvidia = {
     modesetting.enable = true;
-    open.enable = true;
+    open = true; # boolean in 26.05 (verified against hardware/video/nvidia.nix)
     nvidiaSettings = true;
     package = config.boot.kernelPackages.nvidiaPackages.stable;
   };

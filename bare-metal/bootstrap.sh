@@ -39,10 +39,8 @@ REPO_SRC="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 HOSTNAME_FLAKE="nixos"
 USER_NAME="pakele"
-# Known-good ESP on the box this kit was built for — ONLY used to pre-mark
-# the default in the ESP menu (Enter picks it). Never assumed.
-KNOWN_ESP_PARTUUID="b45dfc6b-fa67-48a0-8f90-d1d4ba595a89"
-ESP_PARTUUID_DEFAULT_UNUSED=""
+# No machine-specific identifiers are embedded in this kit — menu defaults
+# are derived from the TARGET machine's own labels at run time.
 WORK_DIR="/tmp/nixos-config-install-$(id -u)"
 MNT="/mnt"
 
@@ -120,13 +118,24 @@ if grep -Eq '^[[:space:]]*(initialPassword|hashedPassword)[[:space:]]*=' "$REPO_
 fi
 echo "all repo gates passed"
 
+step "Network pre-flight (nixpkgs must be fetchable) — BEFORE the nix-shell re-exec, so no-network fails clearly"
+if [ "$CHECK_ONLY" = 1 ]; then
+  # A dry run must work offline — it never fetches nixpkgs.
+  if curl -sfI -m 10 https://github.com >/dev/null 2>&1; then echo "network OK"; else warn "no network (irrelevant for --check-only; the real install requires it)"; fi
+elif ! curl -sfI -m 10 https://github.com >/dev/null 2>&1; then
+  die "no network. Connect ethernet (or Wi-Fi via the installer's tools), then re-run. Network is required to fetch nixpkgs."
+else
+  echo "network OK"
+fi
+
 step "Tool pre-flight"
 # git is NOT on the minimal ISO's PATH; nix-shell (the ISO's own channel)
 # provides it. Re-exec so this script AND nix's flake eval can both use git.
 if ! command -v git >/dev/null 2>&1; then
+  [ "${BOOTSTRAP_IN_NIX_SHELL:-}" = 1 ] && die "git is still missing inside nix-shell — aborting instead of recursing"
   command -v nix-shell >/dev/null 2>&1 || die "git missing and nix-shell unavailable to provide it"
   echo "git not found on PATH — re-executing inside 'nix-shell -p git'"
-  exec nix-shell -p git --run "exec bash $(printf '%q' "$SCRIPT_PATH") $(printf '%q ' "${ORIGINAL_ARGS[@]}")"
+  exec nix-shell -p git --run "exec env BOOTSTRAP_IN_NIX_SHELL=1 bash $(printf '%q' "$SCRIPT_PATH") $(printf '%q ' "${ORIGINAL_ARGS[@]}")"
 fi
 # --check-only only inspects: it never formats, mounts, or evaluates.
 if [ "$CHECK_ONLY" = 1 ]; then
@@ -151,14 +160,27 @@ cp -r "$REPO_SRC" "$WORK_DIR"
 # shipped into the installed system can push to GitHub from first boot.
 echo "staged at $WORK_DIR"
 
-step "Network pre-flight (nixpkgs must be fetchable)"
+if [ "$CHECK_ONLY" = 0 ]; then
+  step "Preliminary eval — config bugs caught BEFORE any disk is touched"
+  # Runs against the placeholder hardware config (machine-neutral). The
+  # definitive eval against the REAL generated config happens after format;
+  # this one makes config-class failures a free fix-and-rerun.
+  if ! nix --extra-experimental-features 'nix-command flakes' \
+        eval "$WORK_DIR#nixosConfigurations.$HOSTNAME_FLAKE.config.system.build.toplevel.drvPath" --raw >/dev/null; then
+    die "flake failed to evaluate — read the errors above, fix, re-run (nothing has been touched yet)"
+  fi
+  echo "flake evaluates clean (preliminary)"
+fi
+
+# Clear stale /mnt BEFORE the mounted-device maps are built, so a re-run is
+# never blocked by its own leftovers from a failed prior run.
 if [ "$CHECK_ONLY" = 1 ]; then
-  # A dry run must work offline — it never fetches nixpkgs.
-  if curl -sfI -m 10 https://github.com >/dev/null 2>&1; then echo "network OK"; else warn "no network (irrelevant for --check-only; the real install requires it)"; fi
-elif ! curl -sfI -m 10 https://github.com >/dev/null 2>&1; then
-  die "no network. Connect ethernet (or Wi-Fi via the installer's tools), then re-run. Network is required to fetch nixpkgs."
+  mountpoint -q "$MNT" && warn "$MNT is currently mounted (dry run leaves it; a live run clears it first)"
 else
-  echo "network OK"
+  while read -r mp; do
+    case "$mp" in "$MNT"|"$MNT"/*) echo "unmounting stale $mp"; umount -R "$mp" 2>/dev/null || true;; esac
+  done < <(findmnt -rno TARGET 2>/dev/null | sort -r)
+  if mountpoint -q "$MNT"; then die "$MNT is still a mountpoint after cleanup — clear it manually"; fi
 fi
 
 # Mounted PARTITIONS vs mounted-upon DISKS — kept separate on purpose: a
@@ -179,11 +201,35 @@ KIT_SOURCE="$(readlink -f "${KIT_SOURCE:-}" 2>/dev/null || true)"
 [ -b "${KIT_SOURCE:-}" ] || KIT_SOURCE=""
 KIT_PARTITION="$KIT_SOURCE"
 KIT_DISK="$(base_disk_of "${KIT_SOURCE:-}" 2>/dev/null || true)"
+# Removability decides HOW protective we are: a removable kit USB never
+# offers ANY of its partitions (nothing precious can live there); an
+# internal data-partition kit only protects its own partition (its disk
+# legitimately holds the install target and data partitions).
+KIT_DISK_NAME=""
+KIT_REMOVABLE=0
+if [ -n "$KIT_DISK" ] && [ "$KIT_DISK" != "$KIT_SOURCE" ]; then
+  KIT_DISK_NAME="$(basename "$KIT_DISK")"
+  [ "$(cat "/sys/block/$KIT_DISK_NAME/removable" 2>/dev/null || echo 0)" = 1 ] && KIT_REMOVABLE=1
+fi
 if [ -z "$KIT_SOURCE" ] && [ "$CHECK_ONLY" = 0 ]; then
+  if [ "$MODE" = wipe ]; then
+    die "--wipe could not identify the device this script runs from — refusing (cannot prove the kit disk is not the target)."
+  fi
   warn "could not identify the block device this script runs from (overlay/bind mount?) — kit protection is degraded."
   printf 'Continue anyway? [type YES] '
   read -r a
   [ "$a" = YES ] || die "aborted by user — run this script from a real mounted block device (the install USB)"
+fi
+if [ "$MODE" = wipe ]; then
+  case "$KIT_SOURCE" in
+    /dev/loop*|/dev/dm-*)
+      if [ "$CHECK_ONLY" = 1 ]; then
+        warn "kit runs from $KIT_SOURCE (loop/overlay) — wipe safety cannot be verified"
+      else
+        die "--wipe with a loop/overlay kit is refused (cannot verify which disk holds the kit). Copy the kit to a writable USB and re-run."
+      fi
+      ;;
+  esac
 fi
 
 # One inventory pass; parsed records come from `lsblk -P -b` (quoted
@@ -193,7 +239,6 @@ LSBLK_ALL="$(lsblk -P -b -o NAME,PKNAME,TYPE,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPO
 # ---- BEGIN PARSER ---- (fixture-tested; see bare-metal/test-parser.sh)
 # Default-resolution helpers exist so the fixture test can override them
 # (hermetic: no dependence on this machine's /dev/disk entries).
-resolve_known_esp() { readlink -f "/dev/disk/by-partuuid/$KNOWN_ESP_PARTUUID" 2>/dev/null || true; }
 resolve_root_label() { readlink -f /dev/disk/by-partlabel/root 2>/dev/null || true; }
 # parse_record "KEY=\"v\" ..." -> sets NAME PKNAME TYPE SIZE FSTYPE LABEL PARTLABEL MNTPT
 parse_record() {
@@ -225,7 +270,10 @@ build_candidates() {
     [ "$TYPE" = part ] || continue
     [ -n "$PKNAME" ] || continue
     [ -n "${NTFS_DISK[$PKNAME]:-}" ] && continue          # never touch Windows disks
-    [ "/dev/$NAME" = "$KIT_PARTITION" ] && continue        # never wipe the partition this kit runs from
+    if [ "$PKNAME" = "$KIT_DISK_NAME" ]; then
+      [ "$KIT_REMOVABLE" = 1 ] && continue                # removable kit USB: never offer any of its partitions
+      [ "/dev/$NAME" = "$KIT_PARTITION" ] && continue     # internal kit partition: protect it, siblings stay offerable
+    fi
     if [ "$kind" = root ]; then
       [ "$FSTYPE" = ext4 ] || [ "$FSTYPE" = btrfs ] || continue
     else
@@ -233,17 +281,17 @@ build_candidates() {
       [ "$SIZE" -ge 104857600 ] && [ "$SIZE" -le 1073741824 ] || continue  # 100M..1G
     fi
     mark=""
-    if [ "$kind" = esp ] && [ "$(resolve_known_esp)" = "/dev/$NAME" ]; then
-      mark="   <-- known-good ESP on this box (default)"
-      DEFAULT_IDX=$(( ${#CANDS[@]} + 1 ))
-    fi
-    if [ "$kind" = root ] && [ "$(resolve_root_label)" = "/dev/$NAME" ]; then
-      mark="   <-- this box's current 'root' by PARTLABEL (default)"
+    if [ "$kind" = root ] && [ -z "$DEFAULT_IDX" ] \
+       && { [ "$(resolve_root_label)" = "/dev/$NAME" ] || [ "$LABEL" = nixos ]; }; then
+      mark="   <-- previous NixOS root on this machine (default)"
       DEFAULT_IDX=$(( ${#CANDS[@]} + 1 ))
     fi
     case "${LABEL,,}" in
       data|home|backup) continue ;;  # deliberate: never OFFER likely-data partitions in the menu — target one with --root (which demands its own typed confirmation)
     esac
+    if [ -z "$LABEL" ] && [ -z "$PARTLABEL" ]; then
+      mark="$mark   [!] unlabeled partition — verify what this is before selecting it"
+    fi
     if [ -n "$MNTPT" ]; then
       [ "$CHECK_ONLY" = 1 ] || continue   # live runs never offer mounted partitions
       mark="$mark   [mounted: $MNTPT — dry-run display only]"
@@ -285,16 +333,6 @@ select_part() {
   echo "${CANDS[$((input - 1))]}"
 }
 # ---- END PARSER ----
-
-step "Clear stale /mnt (leftovers from a failed prior run) — BEFORE device resolution, so a re-run is never blocked by its own leftovers"
-if [ "$CHECK_ONLY" = 1 ]; then
-  mountpoint -q "$MNT" && warn "$MNT is currently mounted (dry run leaves it; a live run clears it first)"
-else
-  while read -r mp; do
-    case "$mp" in "$MNT"|"$MNT"/*) echo "unmounting stale $mp"; umount -R "$mp" 2>/dev/null || true;; esac
-  done < <(findmnt -rno TARGET 2>/dev/null | sort -r)
-  if mountpoint -q "$MNT"; then die "$MNT is still a mountpoint after cleanup — clear it manually"; fi
-fi
 
 step "Resolve target devices"
 if [ "$MODE" = wipe ]; then
@@ -354,6 +392,9 @@ else
   [ "$ESP_FS" = vfat ] || die "ESP $ESP_DEV is not vfat (got '$ESP_FS')"
   for dev in "$ROOT_DEV" "$ESP_DEV"; do
     [ "$dev" = "$KIT_PARTITION" ] && die "$dev is this kit — refusing"
+    if [ "$KIT_REMOVABLE" = 1 ] && [ "$(base_disk_of "$dev")" = "$KIT_DISK" ]; then
+      die "$dev is on the removable kit USB ($KIT_DISK) — refusing"
+    fi
     if [ "${MOUNTED_DEVICES[$dev]:-}" ]; then
       [ "$CHECK_ONLY" = 1 ] || die "$dev is a mounted filesystem — refusing"
       warn "$dev is mounted right now (dry run continues; a live run refuses mounted targets)"
@@ -405,9 +446,16 @@ else
   echo "  all other partitions/disks  : untouched (incl. any Windows and data partitions)"
   echo "  repo staged from            : $REPO_SRC (commit ${COMMIT:-no-git})"
   if [ "$CHECK_ONLY" = 1 ]; then echo "(check-only: stopping before confirmation)"; exit 0; fi
-  printf 'Type ERASE %s to confirm: ' "$ROOT_DEV"
-  read -r a
-  [ "$a" = "ERASE $ROOT_DEV" ] || die "aborted by user"
+  ROOT_LABEL="$(lsblk -no LABEL "$ROOT_DEV" 2>/dev/null || true)"
+  if [ -z "$ROOT_LABEL" ]; then
+    printf 'Type ERASE UNLABELED %s to confirm (unlabeled = unverified — check the menu twice): ' "$ROOT_DEV"
+    read -r a
+    [ "$a" = "ERASE UNLABELED $ROOT_DEV" ] || die "aborted by user"
+  else
+    printf 'Type ERASE %s to confirm: ' "$ROOT_DEV"
+    read -r a
+    [ "$a" = "ERASE $ROOT_DEV" ] || die "aborted by user"
+  fi
 
   step "Format root — ALWAYS fresh (this is a clean install)"
   CUR="$(lsblk -no FSTYPE "$ROOT_DEV")"
@@ -466,6 +514,8 @@ if [ -d "$WORK_DIR/.git" ]; then
 else
   echo "(kit has no .git — lock file still ships; first-boot.sh will git init + fetch before its first push)"
 fi
+echo "staged commit: $(git -C "$WORK_DIR" log --oneline -1 2>/dev/null || echo none)"
+echo "flake.lock: $([ -f "$WORK_DIR/flake.lock" ] && echo present || echo ABSENT)"
 
 step "Eval gate — a flake that cannot evaluate will never be installed"
 if ! nix --extra-experimental-features 'nix-command flakes' \

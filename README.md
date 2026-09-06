@@ -1,7 +1,11 @@
 # nixos-config
 
-Agent-driven NixOS configuration. One flake, one machine definition,
-everything declarative — installed from the USB kit in `bare-metal/`.
+Agent-driven NixOS configuration for **x86-64 machines with NVIDIA GPUs**
+(user `pakele`, host `nixos`, Honolulu time). One flake, one machine
+definition, everything declarative — installed from the USB kit in
+`bare-metal/`. Different hardware? Adapt `configuration.nix` (the NVIDIA
+block) and set your user/timezone — the kit's install process itself is
+hardware-agnostic.
 
 - `flake.nix` — entry point: nixpkgs 26.05 + home-manager (+ COSMIC later)
 - `hosts/nixos/configuration.nix` — system config (user, NVIDIA, Hyprland,

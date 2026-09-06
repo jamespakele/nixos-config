@@ -24,11 +24,13 @@ NAME="nvme0n1p2" PKNAME="nvme0n1" TYPE="part" SIZE="839526400000" FSTYPE="ext4" 
 NAME="nvme0n1p3" PKNAME="nvme0n1" TYPE="part" SIZE="634041212928" FSTYPE="btrfs" LABEL="old-root" PARTLABEL="root" MOUNTPOINT=""
 NAME="nvme0n1p4" PKNAME="nvme0n1" TYPE="part" SIZE="525256215552" FSTYPE="ext4" LABEL="data" PARTLABEL="nvme0n1p4" MOUNTPOINT=""
 NAME="sda1" PKNAME="sda" TYPE="part" SIZE="8589934592" FSTYPE="ntfs" LABEL="win-c" PARTLABEL="Basic data partition" MOUNTPOINT=""
+NAME="sdb1" PKNAME="sdb" TYPE="part" SIZE="107374182400" FSTYPE="ext4" LABEL="" PARTLABEL="" MOUNTPOINT=""
 NAME="sdb2" PKNAME="sdb" TYPE="part" SIZE="104857600" FSTYPE="vfat" LABEL="ESP" PARTLABEL="EFI System Partition" MOUNTPOINT=""'
 
 # Stubs for variables/functions the parser block expects from its caller.
-KNOWN_ESP_PARTUUID="00000000-0000-0000-0000-000000000000"  # overridden by resolve_known_esp below
 KIT_PARTITION=""
+KIT_DISK_NAME=""
+KIT_REMOVABLE=0
 CHECK_ONLY=0
 die() { printf 'DIE: %s\n' "$*" >&2; exit 1; }
 mib() { echo $(( $1 / 1024 / 1024 )); }
@@ -36,7 +38,6 @@ mib() { echo $(( $1 / 1024 / 1024 )); }
 source /tmp/bootstrap-parser-test.sh
 
 # Hermetic overrides for default-marking — no dependence on real /dev/disk.
-resolve_known_esp()  { echo /dev/nvme0n1p1; }
 resolve_root_label() { echo /dev/nvme0n1p3; }
 
 # --- parse_record unit checks ---
@@ -55,24 +56,39 @@ pass "NTFS map: ntfs-holding disk marked"
 # --- root candidates: ONLY the old root qualifies ---
 # Excluded: p1 (vfat), p2 (mounted), p4 (label=data — never offered), sda (ntfs).
 build_candidates root
-[ "${#CANDS[@]}" = 1 ]                     || fail "root candidates: expected 1 (p3), got: ${CANDS[*]:-none}"
+[ "${#CANDS[@]}" = 2 ]                     || fail "root candidates: expected 2 (p3, sdb1), got: ${CANDS[*]:-none}"
 [ "${CANDS[0]}" = /dev/nvme0n1p3 ]         || fail "root candidate[0]: got '${CANDS[0]:-}'"
+[ "${CANDS[1]}" = /dev/sdb1 ]              || fail "root candidate[1]: got '${CANDS[1]:-}'"
 [[ "${CANDS[*]}" != *nvme0n1p4* ]]         || fail "data-labeled partition offered in root menu: ${CANDS[*]}"
 [[ "${ROWS[0]}" == *partlabel=root* ]]     || fail "root row[0] lost partlabel: '${ROWS[0]}'"
-pass "root candidates: mounted sibling (p2), data partition (p4), ntfs disk (sda), vfat (p1) all excluded"
+[[ "${ROWS[1]}" == *unlabeled* ]]          || fail "root row[1] missing unlabeled warning: '${ROWS[1]}'"
+pass "root candidates: mounted sibling (p2), data (p4), ntfs disk (sda), vfat (p1) excluded; unlabeled sdb1 flagged"
 
 # --- root default-marking (partlabel root) ---
 [ "${DEFAULT_IDX:-}" = 1 ]                            || fail "root default-marking broken (DEFAULT_IDX='${DEFAULT_IDX:-unset}')"
-[[ "${ROWS[0]}" == *"current 'root' by PARTLABEL"* ]] || fail "root row[0] missing default mark: '${ROWS[0]}'"
+[[ "${ROWS[0]}" == *"previous NixOS root"* ]] || fail "root row[0] missing default mark: '${ROWS[0]}'"
 pass "root defaults: partlabel-root pre-marked as the Enter default"
 
-# --- kit partition exclusion: kit ON p3 leaves no candidates -> die ---
+# --- kit partition exclusion (internal kit on p3): p3 out, sibling sdb1 stays ---
 KIT_PARTITION=/dev/nvme0n1p3
-if ( build_candidates root ) 2>/dev/null; then
-  fail "kit partition should have been excluded (expected die: no candidates)"
-fi
-pass "kit partition excluded from root menu (script dies rather than offer it)"
+KIT_DISK_NAME=nvme0n1
+build_candidates root
+[[ "${CANDS[*]}" != *nvme0n1p3* ]] || fail "kit partition still offered in root menu: ${CANDS[*]}"
+[ "${CANDS[0]}" = /dev/sdb1 ] || fail "non-kit candidate lost: ${CANDS[*]:-none}"
+pass "internal kit partition excluded; its disk's other partitions stay offerable"
 KIT_PARTITION=""
+KIT_DISK_NAME=""
+
+# --- removable kit USB: ALL of its partitions excluded from menus ---
+KIT_PARTITION=/dev/sdb2
+KIT_DISK_NAME=sdb
+KIT_REMOVABLE=1
+build_candidates root
+[[ "${CANDS[*]}" != *sdb* ]] || fail "removable kit disk partition offered: ${CANDS[*]}"
+[ "${CANDS[0]}" = /dev/nvme0n1p3 ] || fail "non-kit candidate lost: ${CANDS[*]:-none}"
+pass "removable kit USB: every partition on the kit disk excluded"
+KIT_REMOVABLE=0
+KIT_DISK_NAME=""
 
 # --- ESP candidates: size window 100M..1G + default-marking ---
 build_candidates esp
@@ -80,9 +96,17 @@ build_candidates esp
 [ "${CANDS[0]}" = /dev/nvme0n1p1 ]              || fail "esp candidate[0]: got '${CANDS[0]:-}'"
 [ "${CANDS[1]}" = /dev/sdb2 ]                   || fail "esp candidate[1] (100M boundary): got '${CANDS[1]:-}'"
 [[ "${ROWS[0]}" == *"EFI System Partition"* ]]  || fail "esp row lost multi-word PARTLABEL: '${ROWS[0]}'"
-[ "${DEFAULT_IDX:-}" = 1 ]                      || fail "esp default-marking broken (DEFAULT_IDX='${DEFAULT_IDX:-unset}')"
-[[ "${ROWS[0]}" == *known-good* ]]              || fail "esp row[0] missing known-good default mark: '${ROWS[0]}'"
-pass "esp candidates: vfat size window correct (512M + 100M boundary); known-good ESP pre-marked as default"
+[ -z "${DEFAULT_IDX:-}" ]                       || fail "esp menu must NOT pre-mark a default (portable kit — no embedded IDs)"
+pass "esp candidates: vfat size window correct (512M + 100M boundary); no embedded default — explicit selection"
+
+# --- structural: stale-/mnt cleanup must precede the lsblk snapshot ---
+# (a rerun must never be blocked by mounts cleared after the inventory was
+# taken — regression guard for the cleanup/LSBLK_ALL ordering)
+CL=$(grep -n 'Clear stale /mnt' bootstrap.sh | head -1 | cut -d: -f1)
+LS=$(grep -n '^LSBLK_ALL=' bootstrap.sh | head -1 | cut -d: -f1)
+[ -n "$CL" ] && [ -n "$LS" ] && [ "$CL" -lt "$LS" ] \
+  || fail "stale-/mnt cleanup (line ${CL:-?}) must run BEFORE LSBLK_ALL capture (line ${LS:-?})"
+pass "ordering: stale-/mnt cleanup precedes the lsblk inventory capture"
 
 # --- enforce clean parser output ---
 exec 2>&9 9>&-   # restore real stderr

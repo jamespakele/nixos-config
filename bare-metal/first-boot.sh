@@ -45,17 +45,21 @@ if [ "$DATA_READY" = 1 ] && [ -d /srv/data/.ssh ] && [ -n "$(ls -A /srv/data/.ss
   install -d -m 700 ~/.ssh
   cp -a /srv/data/.ssh/. ~/.ssh/
   chmod 700 ~/.ssh
-  ok "~/.ssh restored"
+  for k in ~/.ssh/id_*; do
+    [ -e "$k" ] || continue
+    case "$k" in *.pub) chmod 644 "$k";; *) chmod 600 "$k";; esac
+  done
+  ok "~/.ssh restored (private keys 600, publics 644)"
   # Prefer the SSH remote for push (no credential helper needed) — but only
   # if a private key actually landed and the repo has git metadata yet.
-  if [ -f ~/.ssh/id_ed25519 ] || [ -f ~/.ssh/id_ed25519.pub ]; then
+  if [ -f ~/.ssh/id_ed25519 ]; then
     if git -C "$REPO_DIR" remote set-url origin git@github.com:jamespakele/nixos-config.git 2>/dev/null; then
       ok "remote switched to SSH (was https)"
     else
       warn "no .git yet — the git-init step below sets the SSH remote"
     fi
   else
-    warn "no id_ed25519 in the restored ~/.ssh — push will need HTTPS + token instead"
+    warn "no PRIVATE key (~/.ssh/id_ed25519) in the restored ~/.ssh — a .pub alone cannot push; push needs HTTPS + token instead"
   fi
 else
   warn "~/.ssh not restored (no data partition / no backup). git push will be skipped later."
@@ -107,8 +111,15 @@ step "Commit + push (the pushed repo is the only off-machine config backup)"
 # normal fast-forward.
 if [ ! -d .git ]; then
   git init -b master
-  git remote add origin git@github.com:jamespakele/nixos-config.git
-  echo "(initialized fresh git repo)"
+  # Choose the remote by available auth: private key → SSH; otherwise HTTPS
+  # (gh credential helper or interactive token) — the push block below
+  # already handles both transports.
+  if [ -f ~/.ssh/id_ed25519 ]; then
+    git remote add origin git@github.com:jamespakele/nixos-config.git
+  else
+    git remote add origin https://github.com/jamespakele/nixos-config.git
+  fi
+  echo "(initialized fresh git repo — remote chosen by available auth)"
   if git fetch origin master 2>/dev/null; then
     # Adopt the remote history without touching the working tree (works from
     # an unborn branch, where `git reset --soft` can fail):
@@ -124,14 +135,41 @@ echo "branch: $(git branch --show-current 2>/dev/null || echo none)   remote: $(
 git add -A
 git commit -m "install: real hardware-configuration.nix + flake.lock (bootstrap $(date +%Y-%m-%d))" \
   || echo "nothing to commit"
-if git remote get-url origin 2>/dev/null | grep -q '^git@'; then
-  if ! git push -u origin master; then
-    warn "push failed (keys/auth, or the remote moved past this kit's history). Recovery: git -C $REPO_DIR fetch origin master && git -C $REPO_DIR rebase origin/master && git -C $REPO_DIR push -u origin master"
-  else
-    ok "pushed to GitHub"
+REMOTE_URL="$(git remote get-url origin 2>/dev/null || echo none)"
+echo "push target: $REMOTE_URL"
+PUSH_READY=1
+# Sync with remote history before EVERY push: rebase local onto origin/master
+# (no-op when already current) so stale-kit history lands as a normal
+# fast-forward. Conflicts stop the push — never force.
+if git fetch origin master 2>/dev/null; then
+  if ! git rebase origin/master; then
+    warn "rebase onto origin/master conflicts — push skipped. Resolve manually:"
+    warn "  git -C $REPO_DIR rebase --abort   # then rebase/resolve interactively"
+    PUSH_READY=0
   fi
 else
-  warn "remote is not SSH (keys not restored?) — push skipped. Restore ~/.ssh, then: git -C $REPO_DIR push -u origin master"
+  warn "could not fetch origin/master (network/keys?) — attempting push anyway"
+fi
+push_failed_msg() {
+  warn "push failed — finish manually once auth works, EITHER:"
+  warn "  git -C $REPO_DIR remote set-url origin git@github.com:jamespakele/nixos-config.git && git -C $REPO_DIR push -u origin master   # if your SSH key is registered on GitHub"
+  warn "  or: nix run nixpkgs#gh -- auth login && nix run nixpkgs#gh -- auth setup-git   # HTTPS with gh as credential helper"
+}
+if [ "$PUSH_READY" = 1 ]; then
+  case "$REMOTE_URL" in
+    git@*|ssh://*)
+      if git push -u origin master; then ok "pushed to GitHub"; else push_failed_msg; fi;;
+    https*)
+      # No private key needed: gh (if present + logged in) supplies the
+      # credential helper; otherwise git falls back to its configured
+      # helper or an interactive token prompt on the TTY.
+      if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        gh auth setup-git >/dev/null 2>&1 || warn "gh auth setup-git failed — relying on any existing credential helper"
+      fi
+      if git push -u origin master; then ok "pushed to GitHub"; else push_failed_msg; fi;;
+    *)
+      warn "no usable remote — set one: git -C $REPO_DIR remote add origin git@github.com:jamespakele/nixos-config.git";;
+  esac
 fi
 
 echo
