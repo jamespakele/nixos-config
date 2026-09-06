@@ -1,162 +1,135 @@
-# BOOTSTRAP — CachyOS → NixOS, agent-first
+# BOOTSTRAP — clean NixOS from a USB kit, agent-first
 
-Goal: minimal NixOS installed from this repo, pi working within minutes of
-first boot, then pi installs omp, then omp builds out the rest of the system
-declaratively. Hyprland enabled from phase 1; COSMIC added last (phase 3).
+The process: **cut one USB kit → one command → reboot → one command → one command.**
 
 ```
-edit flake → sudo nixos-rebuild switch --flake ~/nixos-config#nixos → commit+push
+bare-metal/bootstrap.sh   # from the ISO: install NixOS (select root + ESP, gated)
+bare-metal/first-boot.sh  # first boot: restore state, rebuild, commit+push
+bare-metal/agent-setup.sh # install pi, hand off to omp
 ```
 
-NixOS makes every `switch` a rollback generation — agent mistakes cost a
-reboot, not a reinstall.
-Recovery layers, worst case first: Windows (nvme1n1, separate drive — always
-boots regardless) → Linux Mint (nvme0n1p2, untouched) → shared data partition
-(nvme0n1p4: backups, .ssh, hermes) → GitHub flake (full NixOS rebuild:
-`sudo nixos-install --flake github:jamespakele/nixos-config#nixos`) →
-NixOS generation rollback (everyday recovery). Nothing in the install touches
-nvme1n1 or Mint's p2.
+Every switch is a rollback generation — agent mistakes cost a reboot, not a
+reinstall. Everyday recovery: reboot → previous generation in the boot menu.
 
-## Phase 0 — now, on CachyOS (before you wipe anything)
-1. **Back up state to the data partition** — `/srv/data` (ext4, label
-   `data`, nvme0n1p4, 489G). It survives the install because we reuse
-   nvme0n1's existing partitions (see Phase 1 — never re-partition this disk):
+## The kit
+
+The repo IS the kit — `bare-metal/` lives inside it, so the scripts you
+reviewed are exactly what runs (the installer prints its source commit).
+
+1. Write the NixOS **minimal** ISO (26.05) to one USB stick:
    ```bash
-   mkdir -p /srv/data/.ssh /srv/data/pi-backup
-   cp -a ~/.ssh/. /srv/data/.ssh/          # DONE 2026-09-05, checksums verified
-   cp -a ~/.pi /srv/data/pi-backup/        # extensions/themes/skills/sessions
-   ```
-   The repo is safe on GitHub; `~/.pi` and `~/.ssh` are not.
-   Related notes live at `/srv/data/3-resources/config-notes/nixos/`:
-   `bare-metal/` is this playbook (reading copy, no git), `nixos-vm-flake/`
-   holds the prior VM trial handoff (HANDOFF.md / RESULTS.md).
-2. Skim `hosts/nixos/configuration.nix`: set `time.timeZone` to yours, add
-   your SSH pubkey to `users.users.pakele.openssh.authorizedKeys.keys`,
-   rename the host (`nixos`) if you want something else — rename means
-   updating `flake.nix`, the `hosts/nixos/` dir name, and every
-   `--flake ~/nixos-config#<host>` command. Default name works fine.
-3. Commit + push (repo is public so the ISO can fetch it without auth):
-   ```bash
-   cd ~/nixos-config && git add -A && git commit -m "bootstrap" && git push
-   ```
-4. Download the **minimal** NixOS ISO (26.05) → USB:
-   ```bash
-   # dd or Ventoy; example:
    sudo dd if=nixos-minimal-26.05*.iso of=/dev/sdX bs=4M status=progress oflag=sync
    ```
-
-## Phase 1 — install (from the ISO)
-
-1. Boot USB (disable Secure Boot if on; CachyOS already left you UEFI).
-2. **Reuse the existing nvme0n1 partitions — do NOT run sgdisk on this disk**
-   (nvme0n1p4 is the data partition with your backups). CachyOS layout:
-   p1 = ESP (vfat, 512M, keep), p2 = ext4 (782G) = **Linux Mint — the stable
-   rescue boot, never touched**, p3 = btrfs root (590G, reformat to nixos),
-   p4 = ext4 `data` (489G, KEEP — shared by Mint + NixOS, incl. the hermes
-   install and `/srv/data/.ssh` backups).
+2. Copy the whole repo to a second stick (or the same Ventoy stick):
    ```bash
-   sudo mkfs.ext4 -L nixos /dev/nvme0n1p3        # wipe old CachyOS root only
-   sudo mount /dev/disk/by-label/nixos /mnt
-   sudo mkdir -p /mnt/boot && sudo mount /dev/nvme0n1p1 /mnt/boot
+   rsync -a ~/nixos-config/ /media/$USER/KIT/nixos-config/
    ```
-   Note the ESP (p1) is shared with Mint's GRUB. NixOS's systemd-boot will
-   coexist — if Mint disappears from the NixOS boot menu, boot it via the
-   UEFI firmware boot menu (F8/F11) instead; both stay intact on the ESP.
-3. Generate the real hardware config (replaces the repo placeholder with
-   actual UUIDs) and install:
-   ```bash
-   sudo nixos-generate-config --root /mnt
-   cp /mnt/etc/nixos/hardware-configuration.nix ~/nixos-config/hosts/nixos/
-   sudo nixos-install --flake ~/nixos-config#nixos
-   reboot
-   ```
-   (Clone first on the ISO if you haven't: `nix-shell -p git`, then
-   `git clone https://github.com/jamespakele/nixos-config ~/nixos-config`.)
+   No GitHub and no data partition are needed for the install.
 
-## Phase 2 — agent online (first boot, TTY)
+Cut the kit from a PUSHED commit whenever possible: push first, then copy
+that exact tree to the stick, and note the commit hash with the kit (the
+installer prints it anyway). A kit carrying an older `.git` still works —
+first-boot recovers a moved remote with fetch + rebase (exact commands are
+printed if a push is ever rejected).
 
-Node 22 + bun + git + tmux are already present — declared in `home.nix`.
+## Phase 1 — install (from the ISO, at the physical console)
 
 ```bash
-# if you skipped cloning on the ISO:
-git clone https://github.com/jamespakele/nixos-config ~/nixos-config
-cd ~/nixos-config
-
-npm i -g @mariozechner/pi-coding-agent
-pi                       # restore ~/.pi from backup first if you have it
-cp -a /srv/data/.ssh/. ~/.ssh/   # restore keys for git push (needs /srv/data mounted — see Phase 1.2 note)
+sudo bash /run/media/*/nixos-config/bare-metal/bootstrap.sh --check-only  # dry run: no root, no writes, offline OK
+sudo bash /run/media/*/nixos-config/bare-metal/bootstrap.sh               # the real thing
+reboot
 ```
 
-**House rules for the agent** (paste once, or drop into `~/.pi` as a skill):
+What the installer does, in order: repo gates (it refuses to run against the
+bug classes from the 2026-09-05 audit — missing hardware import, self-import,
+placeholder inputs, committed passwords) → clears any stale `/mnt` from a
+failed prior run → device menus (you SELECT the root partition to erase and
+the ESP; on this box the known-good picks are pre-marked, Enter takes them) →
+typed confirmation (`ERASE /dev/…`) → format → generate real hardware config →
+eval gate → nixos-install (sets root's password interactively, and the script
+VERIFIES both root's and pakele's passwords before declaring success — it
+refuses to let you reboot into a locked account, the failure that started
+this) → copies the repo (with git history and the pinned flake.lock) into
+`/home/pakele/nixos-config`.
 
-- All system changes go through this flake. Edit files in `~/nixos-config`,
-  never `/etc`, never `nix-env`, never `pip install`, never `npm i` system-wide.
-- Before any `switch`, run `sudo nixos-rebuild build --flake ~/nixos-config#nixos`
-  — only `switch` on a clean build.
-- After every working `switch`: `git add -A && git commit && git push`.
-  The pushed repo is the only off-machine backup of the config.
-- Prefer nixpkgs options over hand-written config files; search options with
-  `nix search` / web before inventing paths.
-- State uncertainty, don't guess option names — build errors are cheap here.
+Be clear about what `--check-only` proves: device selection, gates, and the
+plan — nothing more. The flake eval, `nix flake lock`, and `nixos-install`
+only run for real; expect a possible fix-and-rerun cycle on a first install
+(all of it happens before any disk is touched, so a rerun is free).
 
-Then: **use pi to install omp** — prompt it:
+Modes:
 
-> Install @oh-my-pi/pi-coding-agent globally with npm, verify it runs on bun,
-> confirm my pi extensions work under it.
+- **Interactive menus (default).** Mounted partitions, Windows disks (ntfs),
+  and anything labeled `data`/`home`/`backup` are never offered. The kit USB
+  can never wipe itself.
+- **`--root DEV --esp DEV`** — non-interactive; same gates. Targeting a
+  Windows-disk partition or a data-labeled partition requires additional
+  typed confirmations (`I UNDERSTAND …`).
+- **`--disk DEV --wipe`** — DESTROYS the whole disk (fresh machine): new
+  ESP + root. Requires `WIPE-DISK DEV`.
+- **`--check-only`** — full plan, zero changes, no root needed.
 
-Keep pi installed as the rescue harness; omp is the daily driver. The two
-share project-local `.pi/` conventions, so extensions carry over.
+Password policy: nothing about passwords is ever committed to this public
+repo. root's password is set by `nixos-install`; pakele's by the script's
+verified `passwd` step. Change pakele's on first login if you want.
 
-## Phase 3 — COSMIC (last, flakiest)
+This box's dual-boot notes: the ESP (nvme0n1p1) is shared with Mint's GRUB —
+systemd-boot coexists; if Mint drops off the NixOS menu, boot it via the
+firmware menu (F8/F11). Nothing touches nvme1n1 (Windows) or Mint's p2.
+Warning: Mint's root (nvme0n1p2, ~782G, unlabeled ext4) IS offered in the
+root menu whenever Mint isn't booted — the typed `ERASE /dev/…` confirmation
+is the protection, and the PARTLABEL=root default is the right pick on this
+box. Read the menu before pressing Enter.
 
-1. Uncomment `nixos-cosmic.url` in `flake.nix`, add
-   `nixos-cosmic.nixosModules.default` to `modules` in `flake.nix`.
-2. **First**: `sudo nixos-rebuild test --flake ~/nixos-config#nixos` — sets up
-   its binary substituters so you don't compile the DE.
-3. Then enable in `configuration.nix`:
-   ```nix
-   services.desktopManager.cosmic.enable = true;
-   services.displayManager.cosmic-greeter.enable = true;
-   ```
-4. `sudo nixos-rebuild switch --flake ~/nixos-config#nixos`
+**Have a locked install from the old playbook?** Either rerun this installer
+for a clean slate (it dogfoods the kit), or recover in place: boot the ISO,
+`mount /dev/disk/by-label/nixos /mnt`, then
+`nixos-enter --root /mnt -c 'passwd pakele'`.
 
-Hyprland + NVIDIA notes: if Hyprland misbehaves on the NVIDIA card, add to
-`hyprland.conf`:
-```
-env = LIBVA_DRIVER_NAME,nvidia
-env = __GLX_VENDOR_LIBRARY_NAME,nvidia
-```
-
-## Phase 4 — daily driving
+## Phase 2 — first boot (TTY login as pakele)
 
 ```bash
-cd ~/nixos-config
-# edit...
-sudo nixos-rebuild switch --flake ~/nixos-config#nixos
-git add -A && git commit -m "..." && git push
+bash ~/nixos-config/bare-metal/first-boot.sh
 ```
 
-- Rollback: reboot → previous generation in boot menu.
-- Clean old gens: automatic (`nix.gc` weekly, 14d retention, already set).
-- Secrets (SSH keys, tokens): never in the repo — `sops-nix` or `agenix`
-  when the agent gets there.
-- New machine / fresh disk: Phase 1 again, `nixos-install --flake
-  github:jamespakele/nixos-config#nixos`, identical system back.
-- Shared data partition (`/srv/data`, by-label `data`): Mint + NixOS both
-  mount it (agent adds `fileSystems."/srv/data"` in Phase 2). The hermes
-  install there was set up under Mint/CachyOS — expect path/glibc quirks
-  under NixOS; if it's an npm/bun project it usually just works, native
-  binaries may need rebuilding. Mint is the unaffected fallback.
-- Later — deployable agent hosts (business): add a second
-  `nixosConfigurations.<name>` to the flake sharing the same modules; same
-  repo deploys to podman/VMs/small hardware via `nixos-install --flake` or
-  `nixos-rebuild --target-host`.
+Verifies login works (it must — you're running it), mounts `/srv/data` if
+present (optional; declared `nofail` in configuration.nix), restores
+`~/.ssh` and `~/.pi` (timestamped backups of anything already there), switches
+the real hardware config, verifies the data mount actually happened, then
+commits and pushes (push is skipped with instructions if keys are absent).
+
+## Phase 3 — agent online
+
+```bash
+bash ~/nixos-config/bare-metal/agent-setup.sh
+```
+
+Installs pi into `~/.npm-global` (never system npm, never sudo), verifies
+node 22 / bun / git, then hands off: run `pi` and paste the omp prompt it
+prints. pi stays as the rescue harness; omp becomes the daily driver.
+
+## Later — COSMIC (flakiest, do it last)
+
+Uncomment `nixos-cosmic.url` in flake.nix, add its module to `modules`,
+`sudo nixos-rebuild test` once (sets up substituters), then enable
+`services.desktopManager.cosmic` + `services.displayManager.cosmic-greeter`
+and `switch`. Hyprland + NVIDIA env vars are in the git history if needed.
+
+## Recovery ladder (worst case first)
+
+Windows (nvme1n1, always boots) → Linux Mint (nvme0n1p2, untouched) →
+shared data partition (nvme0n1p4: .ssh, pi-backup) → GitHub flake
+(`sudo nixos-install --flake github:jamespakele/nixos-config#nixos`) →
+generation rollback (everyday).
 
 ## Gotchas
 
 - nixpkgs ↔ home-manager must be the same release (both 26.05 here).
-- COSMIC in nixpkgs is immature — always via the `nixos-cosmic` flake.
-- Agent state (`~/.pi`) is the one non-declarative piece — back it up or
-  accept re-running `pi install npm:...` on a fresh machine.
-- Don't set `services.displayManager` for Hyprland — it's TTY-launched
-  (or add a greeter later); COSMIC brings its own greeter.
+- Machine-specific hardware config (NVIDIA, kernel params) lives in
+  `configuration.nix`, NOT `hardware-configuration.nix` — that file is
+  regenerated on every install/rebuild.
+- Secrets never go in the repo — sops-nix/agenix later.
+- The hermes install on /srv/data was built under Mint/CachyOS — expect
+  path/glibc quirks under NixOS; npm/bun projects usually just work.
+- Validate script edits with `bash bare-metal/test-parser.sh` (must pass
+  with zero stderr) before committing.

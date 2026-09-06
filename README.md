@@ -1,22 +1,30 @@
 # nixos-config
 
-Agent-driven NixOS configuration. One flake, one machine definition, everything declarative.
+Agent-driven NixOS configuration. One flake, one machine definition,
+everything declarative — installed from the USB kit in `bare-metal/`.
 
-- `flake.nix` — entry point: nixpkgs 26.05 + home-manager (+ COSMIC via nixos-cosmic)
-- `hosts/nixos/configuration.nix` — system config (NVIDIA, Hyprland, base services)
-- `hosts/nixos/hardware-configuration.nix` — **placeholder**; replaced from the installer (see BOOTSTRAP.md)
+- `flake.nix` — entry point: nixpkgs 26.05 + home-manager (+ COSMIC later)
+- `hosts/nixos/configuration.nix` — system config (user, NVIDIA, Hyprland,
+  data partition, services). Machine-specific settings live HERE.
+- `hosts/nixos/hardware-configuration.nix` — placeholder; the installer
+  replaces it with the generated file (regenerated every install).
 - `home.nix` — user environment: nodejs 22 + bun (pi/omp runtimes), git, tmux
-- `BOOTSTRAP.md` — the full migration + agent-bootstrap playbook
+- `bare-metal/` — the install kit: `bootstrap.sh` (ISO installer with
+  device-selection menus and safety gates), `first-boot.sh` (restore + switch
+  + push), `agent-setup.sh` (pi → omp), `test-parser.sh` (fixture tests)
+- `BOOTSTRAP.md` — the full playbook: cut the USB kit, one command, reboot,
+  two commands.
 
 ## Daily use
 
 ```bash
 cd ~/nixos-config
 # edit flake...
-sudo nixos-rebuild switch --flake ~/nixos-config#nixos
-git add -A && git commit -m "..." && git push   # after every working switch
+sudo nixos-rebuild build --flake ~/nixos-config#nixos   # build first
+sudo nixos-rebuild switch --flake ~/nixos-config#nixos  # then switch
+git add -A && git commit -m "..." && git push             # after every working switch
 ```
 
 Rollback: reboot → pick previous generation in the boot menu.
 
-New machine / fresh disk: boot a NixOS ISO and follow `BOOTSTRAP.md` phase 1.
+New machine / fresh disk: see `BOOTSTRAP.md` Phase 1 (USB kit).
