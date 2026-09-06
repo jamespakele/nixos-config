@@ -87,10 +87,12 @@ mib() { echo $(( $1 / 1024 / 1024 )); }
 step "Source repo"
 echo "repo:  $REPO_SRC"
 [ -f "$REPO_SRC/flake.nix" ] || die "flake.nix not found next to this script — run it from the repo's bare-metal/ directory"
-COMMIT="$(git -C "$REPO_SRC" rev-parse --short HEAD 2>/dev/null || true)"
+# The kit is user-owned; the ISO console runs as root — git 2.35+ refuses
+# repos owned by another user unless safe.directory is passed explicitly.
+COMMIT="$(git -c safe.directory="$REPO_SRC" -C "$REPO_SRC" rev-parse --short HEAD 2>/dev/null || true)"
 if [ -n "$COMMIT" ]; then
   echo "commit: $COMMIT"
-  echo "remote: $(git -C "$REPO_SRC" remote get-url origin 2>/dev/null || echo none)"
+  echo "remote: $(git -c safe.directory="$REPO_SRC" -C "$REPO_SRC" remote get-url origin 2>/dev/null || echo none)"
 else
   echo "commit: (not a git checkout — first-boot.sh will git init + remote add)"
 fi

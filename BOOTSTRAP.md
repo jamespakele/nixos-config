@@ -20,10 +20,13 @@ reinstall. Everyday recovery: reboot → previous generation in the boot menu.
 | 3 | `first-boot.sh` | **installed NixOS**, as pakele | Restores keys/state, builds+switches real config, commits+pushes |
 | 4 | `agent-setup.sh` | **installed NixOS**, after first-boot | Installs pi, hands off to omp |
 
-**The stick rule, up front:** the scripts must be on a WRITABLE stick.
-A USB written with `dd` (the ISO itself) is a read-only filesystem — you
-cannot copy the scripts onto that stick afterward. Use a second stick, or
-Ventoy (ISO + data area on one stick). See "The kit" below.
+**Source of the kit, up front:** the Ventoy stick's ONLY job is booting the
+ISO. Two facts from 2026-09-06: the minimal ISO has no desktop automounter
+(nothing mounts automatically), and mounting the Ventoy exFAT partition on
+that ISO failed with `fsconfig() blockdev`. The kit is therefore read from
+the internal **data partition** (ext4, label `data`), mounted at the ISO
+console at `/run/nixos-data` — NEVER under `/mnt` (the installer owns and
+clears `/mnt`). See "The kit" below.
 
 Never run `bootstrap.sh` on an installed system — it is the installer.
 `first-boot.sh` is the FIRST thing you run after rebooting into NixOS;
@@ -34,40 +37,24 @@ Never run `bootstrap.sh` on an installed system — it is the installer.
 The repo IS the kit — `bare-metal/` lives inside it, so the scripts you
 reviewed are exactly what runs (the installer prints its source commit).
 
-1. Put Ventoy on the stick — ONE stick then carries both the bootable ISO
-   and the writable kit. DESTROYS the stick; confirm the device first:
+1. Put Ventoy on the stick — the stick's ONLY job is booting the ISO.
+   DESTROYS the stick; confirm the device first:
    ```bash
    lsblk -o NAME,SIZE,MODEL,TRAN,FSTYPE /dev/sdX
    cd ~/Downloads/ventoy-*/ && sudo sh Ventoy2Disk.sh -i -g /dev/sdX
    ```
    (`-g` = GPT, right for UEFI-only machines; answer `y` at the wipe prompt.)
-2. On replug, the exFAT "Ventoy" data partition auto-mounts. Copy BOTH:
+2. Copy the ISO onto the stick's Ventoy partition and verify:
    ```bash
    cp ~/3-resources/nixos-isos/nixos-26.05-minimal-x86_64-linux.iso /media/$USER/Ventoy/
-   rsync -rlt /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/Ventoy/nixos-config/
-   ```
-   (`rsync -rlt`, NOT `-a`: exFAT cannot store Unix owner/group/perms, so
-   `-a` dies with a flood of `chgrp: Operation not permitted` and exit 23.
-   `-rlt` = recursive + links + times — everything exFAT can honor. The
-   exec bit is lost too; harmless, scripts run via `bash script.sh`.
-   Re-cutting is the normal loop and rsync copies only changes. Deliberately
-   NO `--delete` — a typo'd destination could prune the wrong tree; if you
-   deleted files from the repo, remove the kit dir and re-cut instead.)
-   Verify both landed:
-   ```bash
    sha256sum /media/$USER/Ventoy/nixos-26.05-minimal-x86_64-linux.iso
-   git -C /media/$USER/Ventoy/nixos-config rev-parse --short HEAD
-   ls /media/$USER/Ventoy/nixos-config/bare-metal/
    ```
-   (The ISO hash must equal the value in the `.sha256` sidecar next to the
-   ISO — compare the hash VALUE, the sidecar's filename may differ. The git
-   HEAD must equal the repo's pushed HEAD. exFAT ignores Unix permissions —
-   harmless, scripts run via `bash script.sh`. No GitHub and no data
-   partition are needed for the install.)
-   On the ISO console, locate the kit with:
-   ```bash
-   find /run/media /media -path '*/nixos-config/bare-metal/bootstrap.sh' 2>/dev/null
-   ```
+   (The hash must equal the value in the `.sha256` sidecar next to the ISO —
+   compare the hash VALUE, the sidecar's filename may differ.)
+   Do NOT put the kit on the stick: the minimal ISO automounts nothing, and
+   mounting the Ventoy exFAT partition failed on that ISO outright
+   (`fsconfig() blockdev` error, 2026-09-06). The kit lives on the
+   data partition and is read from there at the console (step 3).
 
 Cut the kit from a PUSHED commit whenever possible: push first, then copy
 that exact tree to the stick, and note the commit hash with the kit (the
@@ -79,10 +66,16 @@ recovery commands (never force-pushed).
 ## Phase 1 — install (from the ISO, at the physical console)
 
 ```bash
-sudo bash /run/media/*/nixos-config/bare-metal/bootstrap.sh --check-only  # dry run: no root, no writes, offline OK
-sudo bash /run/media/*/nixos-config/bare-metal/bootstrap.sh               # the real thing
+# at the ISO root shell (you are root; no sudo needed)
+mkdir -p /run/nixos-data && mount -o ro /dev/disk/by-label/data /run/nixos-data
+KIT=/run/nixos-data/3-resources/config-notes/nixos/nixos-config
+bash $KIT/bare-metal/bootstrap.sh --check-only   # dry run: offline OK, no root needed
+bash $KIT/bare-metal/bootstrap.sh                # only after the plan matches
 reboot
 ```
+A self-verifying version of these steps (with EXPECTED output at every
+step) is inside the kit: `bare-metal/RUNBOOK-iso-console.md` — at the
+console, `cat $KIT/bare-metal/RUNBOOK-iso-console.md` and follow it there.
 
 What the installer does, in order: repo gates (it refuses to run against the
 bug classes from the 2026-09-05 audit — missing hardware import, self-import,
