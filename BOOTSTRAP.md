@@ -22,7 +22,7 @@ reviewed are exactly what runs (the installer prints its source commit).
    ```
 2. Copy the whole repo to a second stick (or a Ventoy data partition):
    ```bash
-   rsync -a ~/nixos-config/ /media/$USER/KIT/nixos-config/
+   rsync -a /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/KIT/nixos-config/
    ```
    The kit must be on a WRITABLE USB — a stick written with `dd` is a
    read-only ISO filesystem, so use a second stick or Ventoy's data
