@@ -11,6 +11,24 @@ bare-metal/agent-setup.sh # install pi, hand off to omp
 Every switch is a rollback generation — agent mistakes cost a reboot, not a
 reinstall. Everyday recovery: reboot → previous generation in the boot menu.
 
+## Quick start — what runs where, in order
+
+| # | Script | WHERE | What it does |
+|---|--------|-------|--------------|
+| 1 | `bootstrap.sh` | **ISO console** (before any install) | The installer: select root+ESP, format, install, passwords, copies the repo into the new system |
+| 2 | `reboot` → log in as pakele | installed NixOS (TTY) | — |
+| 3 | `first-boot.sh` | **installed NixOS**, as pakele | Restores keys/state, builds+switches real config, commits+pushes |
+| 4 | `agent-setup.sh` | **installed NixOS**, after first-boot | Installs pi, hands off to omp |
+
+**The stick rule, up front:** the scripts must be on a WRITABLE stick.
+A USB written with `dd` (the ISO itself) is a read-only filesystem — you
+cannot copy the scripts onto that stick afterward. Use a second stick, or
+Ventoy (ISO + data area on one stick). See "The kit" below.
+
+Never run `bootstrap.sh` on an installed system — it is the installer.
+`first-boot.sh` is the FIRST thing you run after rebooting into NixOS;
+`agent-setup.sh` runs only after first-boot succeeds.
+
 ## The kit
 
 The repo IS the kit — `bare-metal/` lives inside it, so the scripts you
