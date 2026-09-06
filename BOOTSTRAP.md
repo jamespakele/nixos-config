@@ -34,26 +34,33 @@ Never run `bootstrap.sh` on an installed system — it is the installer.
 The repo IS the kit — `bare-metal/` lives inside it, so the scripts you
 reviewed are exactly what runs (the installer prints its source commit).
 
-1. Write the NixOS **minimal** ISO (26.05) to one USB stick:
+1. Put Ventoy on the stick — ONE stick then carries both the bootable ISO
+   and the writable kit. DESTROYS the stick; confirm the device first:
    ```bash
-   sudo dd if=nixos-minimal-26.05*.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   lsblk -o NAME,SIZE,MODEL,TRAN,FSTYPE /dev/sdX
+   cd ~/Downloads/ventoy-*/ && sudo sh Ventoy2Disk.sh -i -g /dev/sdX
    ```
-2. Copy the whole repo to a second stick (or a Ventoy data partition):
+   (`-g` = GPT, right for UEFI-only machines; answer `y` at the wipe prompt.)
+2. On replug, the exFAT "Ventoy" data partition auto-mounts. Copy BOTH:
    ```bash
-   rsync -a /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/KIT/nixos-config/
+   cp ~/3-resources/nixos-isos/nixos-26.05-minimal-x86_64-linux.iso /media/$USER/Ventoy/
+   rsync -a /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/Ventoy/nixos-config/
    ```
    (`rsync` over `cp`: re-cutting is the normal loop and it copies only
    changes; `-a` keeps scripts executable. Deliberately NO `--delete` —
    a typo'd destination could prune the wrong tree. If you deleted files
    from the repo, remove the kit dir and re-cut instead.)
-   Verify the stick carries the commit you think it does:
+   Verify both landed:
    ```bash
-   git -C /media/$USER/KIT/nixos-config rev-parse --short HEAD
-   ls /media/$USER/KIT/nixos-config/bare-metal/
+   sha256sum /media/$USER/Ventoy/nixos-26.05-minimal-x86_64-linux.iso
+   git -C /media/$USER/Ventoy/nixos-config rev-parse --short HEAD
+   ls /media/$USER/Ventoy/nixos-config/bare-metal/
    ```
-   The kit must be on a WRITABLE USB — a stick written with `dd` is a
-   read-only ISO filesystem, so use a second stick or Ventoy's data
-   partition. No GitHub and no data partition are needed for the install.
+   (The ISO hash must equal the value in the `.sha256` sidecar next to the
+   ISO — compare the hash VALUE, the sidecar's filename may differ. The git
+   HEAD must equal the repo's pushed HEAD. exFAT ignores Unix permissions —
+   harmless, scripts run via `bash script.sh`. No GitHub and no data
+   partition are needed for the install.)
    On the ISO console, locate the kit with:
    ```bash
    find /run/media /media -path '*/nixos-config/bare-metal/bootstrap.sh' 2>/dev/null
