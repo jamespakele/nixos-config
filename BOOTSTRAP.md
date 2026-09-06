@@ -44,12 +44,15 @@ reviewed are exactly what runs (the installer prints its source commit).
 2. On replug, the exFAT "Ventoy" data partition auto-mounts. Copy BOTH:
    ```bash
    cp ~/3-resources/nixos-isos/nixos-26.05-minimal-x86_64-linux.iso /media/$USER/Ventoy/
-   rsync -a /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/Ventoy/nixos-config/
+   rsync -rlt /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/Ventoy/nixos-config/
    ```
-   (`rsync` over `cp`: re-cutting is the normal loop and it copies only
-   changes; `-a` keeps scripts executable. Deliberately NO `--delete` —
-   a typo'd destination could prune the wrong tree. If you deleted files
-   from the repo, remove the kit dir and re-cut instead.)
+   (`rsync -rlt`, NOT `-a`: exFAT cannot store Unix owner/group/perms, so
+   `-a` dies with a flood of `chgrp: Operation not permitted` and exit 23.
+   `-rlt` = recursive + links + times — everything exFAT can honor. The
+   exec bit is lost too; harmless, scripts run via `bash script.sh`.
+   Re-cutting is the normal loop and rsync copies only changes. Deliberately
+   NO `--delete` — a typo'd destination could prune the wrong tree; if you
+   deleted files from the repo, remove the kit dir and re-cut instead.)
    Verify both landed:
    ```bash
    sha256sum /media/$USER/Ventoy/nixos-26.05-minimal-x86_64-linux.iso
