@@ -24,6 +24,15 @@ reviewed are exactly what runs (the installer prints its source commit).
    ```bash
    rsync -a /srv/data/3-resources/config-notes/nixos/nixos-config/ /media/$USER/KIT/nixos-config/
    ```
+   (`rsync` over `cp`: re-cutting is the normal loop and it copies only
+   changes; `-a` keeps scripts executable. Deliberately NO `--delete` —
+   a typo'd destination could prune the wrong tree. If you deleted files
+   from the repo, remove the kit dir and re-cut instead.)
+   Verify the stick carries the commit you think it does:
+   ```bash
+   git -C /media/$USER/KIT/nixos-config rev-parse --short HEAD
+   ls /media/$USER/KIT/nixos-config/bare-metal/
+   ```
    The kit must be on a WRITABLE USB — a stick written with `dd` is a
    read-only ISO filesystem, so use a second stick or Ventoy's data
    partition. No GitHub and no data partition are needed for the install.
