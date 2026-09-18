@@ -58,6 +58,9 @@
     isNormalUser = true;
     extraGroups = [ "wheel" "networkmanager" ];
     initialPassword = "changeme"; # replace with hashed password after first boot
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINwvGkgylG5py9WmplQYFTaDBGph1i03LA9GlcE4Tb4N james@pakele.ai"
+    ];
   };
 
   environment.systemPackages = with pkgs; [
