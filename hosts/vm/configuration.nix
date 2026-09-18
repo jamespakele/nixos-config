@@ -52,6 +52,7 @@
   # VM niceties
   services.qemuGuest.enable = true;
   services.spice-vdagentd.enable = true;
+  services.openssh.enable = true;
 
   users.users.pakele = {
     isNormalUser = true;
