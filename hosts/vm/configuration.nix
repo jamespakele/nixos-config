@@ -57,7 +57,7 @@
   users.users.pakele = {
     isNormalUser = true;
     extraGroups = [ "wheel" "networkmanager" ];
-    initialPassword = "changeme"; # replace with hashed password after first boot
+    hashedPassword = "$6$NRTPnzfK7006RtnC$OSCxACOH.SKHNx7Ko9ht7s9sJquh/nAGU5oRk85bRSJ4mUGvVHreN2h.YsYNXbcYBeZ4w.8rBBFcmOu7obk3X1";
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINwvGkgylG5py9WmplQYFTaDBGph1i03LA9GlcE4Tb4N james@pakele.ai"
     ];
@@ -69,6 +69,8 @@
     wget
     curl
     foot
+    xwayland-satellite
+    papirus-icon-theme
   ];
 
   system.stateVersion = "26.05";
